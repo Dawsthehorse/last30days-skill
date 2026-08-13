@@ -2429,17 +2429,24 @@ def run(
         elapsed=time.monotonic() - run_started,
     )
     source_status = _finalize_source_status(bundle.source_status, items_by_source)
-    candidates = weighted_rrf(bundle.items_by_source_and_query, plan, pool_limit=settings["pool_limit"])
     # Normalized set of handles this run resolved for the topic. A candidate
     # authored by one of these is first-party and is exempted from the
     # entity-miss demotion in rerank (a post never repeats its own author's
     # name, so the body-text grounding check would otherwise zero out the
-    # subject's own highest-signal posts).
+    # subject's own highest-signal posts). Built before fusion so the
+    # per-author cap can give the topic's subject a higher allowance than an
+    # incidental third-party account.
     resolved_handles = {
         h.lstrip("@").strip().lower()
         for h in ([x_handle, github_user, *(x_related or []), *supplemental_handles])
         if h and h.strip()
     }
+    candidates = weighted_rrf(
+        bundle.items_by_source_and_query,
+        plan,
+        pool_limit=settings["pool_limit"],
+        first_party_handles=resolved_handles,
+    )
     private_candidates = [
         candidate
         for candidate in candidates
