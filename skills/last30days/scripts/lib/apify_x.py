@@ -54,6 +54,15 @@ _EXECUTE_WAIT = 90
 # Ceiling on post-run polling (runs that outlive waitForFinish), per call.
 _POLL_DEADLINE = 120
 _POLL_INTERVAL = 5
+# Hard ceiling on the WALL CLOCK of one _run_search_terms call. The nested
+# poll loops each carried their own _POLL_DEADLINE, so a single call could
+# stack execute + envelope poll + run poll + dataset fetch into ~10 minutes
+# while holding a pipeline worker thread. One budget bounds the whole call and
+# clamps every HTTP timeout to what is left of it.
+_CALL_DEADLINE = 300
+# Floor for a clamped socket timeout, so the last request in the budget still
+# gets a fair chance instead of being issued with ~0s.
+_MIN_TIMEOUT = 5
 
 _env_file_cache: Optional[Dict[str, str]] = None
 
@@ -103,11 +112,27 @@ def is_available(config: Optional[Dict[str, Any]] = None) -> bool:
     return bool(url and key)
 
 
+def _remaining(deadline: Optional[float]) -> float:
+    """Seconds left in the call budget (inf when no budget is in force)."""
+    if deadline is None:
+        return float("inf")
+    return deadline - time.monotonic()
+
+
+def _clamped(timeout: int, deadline: Optional[float]) -> int:
+    """A socket timeout that cannot outlive the call budget."""
+    left = _remaining(deadline)
+    if left == float("inf"):
+        return timeout
+    return max(_MIN_TIMEOUT, min(timeout, int(left)))
+
+
 def _execute(
     config: Optional[Dict[str, Any]],
     service_input: Dict[str, Any],
     wait: int,
     timeout: int,
+    deadline: Optional[float] = None,
 ) -> Dict[str, Any]:
     """One POST /api/execute round-trip. Raises http.HTTPError on HTTP failure."""
     url, key = gateway_config(config)
@@ -115,41 +140,48 @@ def _execute(
         f"{url.rstrip('/')}/api/execute",
         {"service": "apify", "input": service_input, "wait": wait},
         headers={"x-service-key": key},
-        timeout=timeout,
+        timeout=_clamped(timeout, deadline),
     )
 
 
-def _get_job(config: Optional[Dict[str, Any]], job_id: str) -> Dict[str, Any]:
+def _get_job(
+    config: Optional[Dict[str, Any]], job_id: str, deadline: Optional[float] = None
+) -> Dict[str, Any]:
     """Fetch a gateway job envelope (GET /api/jobs/apify/{jobId})."""
     url, key = gateway_config(config)
     wrapper = http.get(
         f"{url.rstrip('/')}/api/jobs/apify/{job_id}",
         headers={"x-service-key": key},
-        timeout=30,
+        timeout=_clamped(30, deadline),
     )
     job = wrapper.get("job")
     return job if isinstance(job, dict) else wrapper
 
 
 def _await_envelope(
-    config: Optional[Dict[str, Any]], envelope: Dict[str, Any]
+    config: Optional[Dict[str, Any]],
+    envelope: Dict[str, Any],
+    deadline: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Poll a queued/running gateway job until it settles or the deadline hits.
 
     The /api/execute ``wait`` usually covers the job, but a busy gateway queue
-    can hand back a still-running envelope; this closes that gap.
+    can hand back a still-running envelope; this closes that gap. ``deadline``
+    is the shared call budget (see ``_CALL_DEADLINE``); the local
+    ``_POLL_DEADLINE`` only ever shortens it, never extends it.
     """
-    deadline = time.monotonic() + _POLL_DEADLINE
+    local = time.monotonic() + _POLL_DEADLINE
+    stop = local if deadline is None else min(local, deadline)
     while envelope.get("status") in ("queued", "running"):
         job_id = str(envelope.get("jobId") or "")
-        if not job_id or time.monotonic() >= deadline:
+        if not job_id or time.monotonic() + _POLL_INTERVAL >= stop:
             return {
                 **envelope,
                 "error": f"gateway job {job_id or '?'} still "
                          f"{envelope.get('status')} after poll deadline",
             }
         time.sleep(_POLL_INTERVAL)
-        envelope = _get_job(config, job_id)
+        envelope = _get_job(config, job_id, deadline=stop)
     return envelope
 
 
@@ -173,22 +205,29 @@ def _run_data(envelope: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _await_run(
-    config: Optional[Dict[str, Any]], run: Dict[str, Any]
+    config: Optional[Dict[str, Any]],
+    run: Dict[str, Any],
+    deadline: Optional[float] = None,
 ) -> tuple[Dict[str, Any], str]:
     """Poll a not-yet-finished Apify run until it settles or the deadline hits.
 
     Returns (run_data, error). ``error`` is non-empty on failure/timeout.
+    ``deadline`` is the shared call budget; the local ``_POLL_DEADLINE`` only
+    shortens it. Every nested wait is bounded by the same ``stop``, so one
+    iteration can no longer overshoot the budget by its own poll deadline.
     """
-    deadline = time.monotonic() + _POLL_DEADLINE
+    local = time.monotonic() + _POLL_DEADLINE
+    stop = local if deadline is None else min(local, deadline)
     status = str(run.get("status") or "")
     run_id = str(run.get("id") or "")
     while status in ("READY", "RUNNING") and run_id:
-        if time.monotonic() >= deadline:
+        if time.monotonic() + _POLL_INTERVAL >= stop:
             return run, f"actor run {run_id} still {status} after poll deadline"
         time.sleep(_POLL_INTERVAL)
         envelope = _await_envelope(config, _execute(
-            config, {"kind": "runStatus", "runId": run_id}, wait=30, timeout=60
-        ))
+            config, {"kind": "runStatus", "runId": run_id}, wait=30, timeout=60,
+            deadline=stop,
+        ), deadline=stop)
         err = _envelope_error(envelope)
         if err:
             return run, err
@@ -200,7 +239,10 @@ def _await_run(
 
 
 def _fetch_dataset(
-    config: Optional[Dict[str, Any]], dataset_id: str, limit: int
+    config: Optional[Dict[str, Any]],
+    dataset_id: str,
+    limit: int,
+    deadline: Optional[float] = None,
 ) -> tuple[List[Dict[str, Any]], str]:
     """Fetch a finished run's dataset items. Returns (items, error)."""
     envelope = _await_envelope(config, _execute(
@@ -212,7 +254,8 @@ def _fetch_dataset(
         },
         wait=60,
         timeout=90,
-    ))
+        deadline=deadline,
+    ), deadline=deadline)
     err = _envelope_error(envelope)
     if err:
         return [], err
@@ -220,6 +263,23 @@ def _fetch_dataset(
     if not isinstance(result, list):
         return [], ""
     return [row for row in result if isinstance(row, dict)], ""
+
+
+def _fatal_http(exc: Exception) -> str | None:
+    """Non-empty when a gateway HTTP failure is permanent for this run.
+
+    402 is as fatal as 401/403 here: the gateway fronts a PAY-PER-RESULT
+    actor, so an exhausted Apify balance / gateway quota is a spend failure
+    that will repeat for every stream in the run. Swallowing it as transient
+    made the pipeline report "X returned nothing" instead of failing over with
+    an honest error (xquik._execute_search already treats 402 this way).
+    """
+    status = getattr(exc, "status_code", None)
+    if status == 402:
+        return "api-dispatch/apify quota exhausted (402)"
+    if status in (401, 403):
+        return f"api-dispatch auth failed ({status})"
+    return None
 
 
 def _run_search_terms(
@@ -235,6 +295,7 @@ def _run_search_terms(
     """
     if not is_available(config):
         return [], f"No {URL_VAR}/{KEY_VAR} configured"
+    deadline = time.monotonic() + _CALL_DEADLINE
     try:
         envelope = _execute(
             config,
@@ -250,11 +311,12 @@ def _run_search_terms(
             },
             wait=_EXECUTE_WAIT,
             timeout=_EXECUTE_WAIT + 30,
+            deadline=deadline,
         )
     except http.HTTPError as exc:
-        status = getattr(exc, "status_code", None)
-        if status in (401, 403):
-            return [], f"api-dispatch auth failed ({status})"
+        fatal = _fatal_http(exc)
+        if fatal:
+            return [], fatal
         _log(f"HTTP error from gateway: {exc}")
         return [], None
     except Exception as exc:
@@ -262,25 +324,25 @@ def _run_search_terms(
         return [], None
 
     try:
-        envelope = _await_envelope(config, envelope)
+        envelope = _await_envelope(config, envelope, deadline=deadline)
         err = _envelope_error(envelope)
         if err:
             return [], f"apify run failed: {err}"
 
-        run, err = _await_run(config, _run_data(envelope))
+        run, err = _await_run(config, _run_data(envelope), deadline=deadline)
         if err:
             return [], f"apify run failed: {err}"
         dataset_id = str(run.get("defaultDatasetId") or "")
         if not dataset_id:
             return [], "apify run has no defaultDatasetId"
-        rows, err = _fetch_dataset(config, dataset_id, max_items)
+        rows, err = _fetch_dataset(config, dataset_id, max_items, deadline=deadline)
         if err:
             return [], f"apify dataset fetch failed: {err}"
         return rows, None
     except http.HTTPError as exc:
-        status = getattr(exc, "status_code", None)
-        if status in (401, 403):
-            return [], f"api-dispatch auth failed ({status})"
+        fatal = _fatal_http(exc)
+        if fatal:
+            return [], fatal
         _log(f"HTTP error from gateway: {exc}")
         return [], None
     except Exception as exc:

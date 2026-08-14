@@ -878,9 +878,13 @@ def _sub_lanes_for(source: str, config: Dict[str, Any]):
         })
         comments = {"enabled": bool(env.is_youtube_comments_available(config))}
     elif source == "x":
-        has_key = bool(config.get("XAI_API_KEY") or config.get("XQUIK_API_KEY"))
+        from . import apify_x
+        apify = bool(apify_x.is_available(config))
+        has_key = apify or bool(config.get("XAI_API_KEY") or config.get("XQUIK_API_KEY"))
         cookie = bool(env.x_pending_browser_auth(config, local_only=True))
-        if has_key:
+        if apify:
+            note = "api-dispatch gateway path (key-backed, cookie-free)"
+        elif has_key:
             note = "XAI_API_KEY key-backed path (verified, cookie-free)"
         elif cookie:
             note = (

@@ -39,10 +39,12 @@ def _is_x_active(config: dict, research_results: dict) -> bool:
 
 def _has_x_credentials(config: dict) -> bool:
     """Return True when any X/Twitter source credential is configured."""
+    from . import apify_x
     return bool(
         config.get("AUTH_TOKEN")
         or config.get("XAI_API_KEY")
         or config.get("XQUIK_API_KEY")
+        or apify_x.is_available(config)
     )
 
 
