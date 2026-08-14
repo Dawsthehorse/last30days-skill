@@ -20,6 +20,7 @@ from typing import Any
 
 from . import (
     amazon,
+    apify_x,
     arxiv,
     bird_x,
     bluesky,
@@ -3235,21 +3236,28 @@ def _run_supplemental_searches(
         return
 
     # Pick the X handle-search backend: the first handle-capable backend in the
-    # chain (bird or xquik). These supplemental from:/mentions lanes are
+    # chain (apify, bird or xquik). These supplemental from:/mentions lanes are
     # complementary to the topic search, so when the topic primary can't run
     # them (xai/xurl have no handle-lane implementation) but a capable backend
-    # is available, use it rather than skipping Phase 2. bird scrapes X GraphQL
-    # with the user's browser cookies; xquik runs the same lanes over its REST
-    # API. All items land under the single "x" slug.
+    # is available, use it rather than skipping Phase 2. apify runs the lanes
+    # through the api-dispatch gateway; bird scrapes X GraphQL with the user's
+    # browser cookies; xquik runs the same lanes over its REST API. All items
+    # land under the single "x" slug.
     x_slug = "x"
     chain = env.x_backend_chain(config)
     # Trust an explicit runtime backend as the head of the chain.
     pinned = runtime.x_search_backend
     if pinned:
         chain = [pinned] + [b for b in chain if b != pinned]
-    primary = next((b for b in chain if b in ("bird", "xquik")), None)
+    primary = next((b for b in chain if b in ("apify", "bird", "xquik")), None)
 
-    if primary == "bird":
+    if primary == "apify":
+        def _from_lane(hs: list, count: int) -> list:
+            return apify_x.search_handles(hs, topic, from_date, to_date, count_per=count, config=config)
+
+        def _about_lane(hs: list, count: int) -> list:
+            return apify_x.search_mentions(hs, from_date, to_date, topic=topic, count_per=count, config=config)
+    elif primary == "bird":
         def _from_lane(hs: list, count: int) -> list:
             return bird_x.search_handles(hs, topic, from_date, count_per=count)
 
@@ -3510,7 +3518,10 @@ def _fetch_x_backend(backend, subquery, from_date, to_date, depth, config):
     caller can fail over to the next backend or surface the error honestly.
     """
     query = subquery.search_query
-    if backend == "bird":
+    if backend == "apify":
+        result = apify_x.search_x(query, from_date, to_date, depth=depth, config=config)
+        items = apify_x.parse_x_response(result)
+    elif backend == "bird":
         result = bird_x.search_x(query, from_date, to_date, depth=depth)
         items = bird_x.parse_bird_response(result, query=query)
     elif backend == "xai":

@@ -345,13 +345,45 @@ def _probe_reddit_public(config: Dict[str, Any]) -> BackendFinding:
 # Registry: routing declared once, from env.py's definitions where they exist.
 # ---------------------------------------------------------------------------
 
+_APIFY_REQUIRES = "API_DISPATCH_SERVICE_URL/KEY (api-dispatch gateway)"
+
+
+def _probe_apify(config: Dict[str, Any]) -> BackendFinding:
+    """apify = Apify tweet scraper via the api-dispatch gateway.
+
+    Presence-only probe (config/env/env-file lookup, never a network call),
+    mirroring the paid-lane rule for xai/xquik.
+    """
+    from . import apify_x
+
+    if apify_x.is_available(config):
+        return BackendFinding(
+            name="apify",
+            status=health.OK,
+            detail="api-dispatch gateway URL/key present",
+            requires=_APIFY_REQUIRES,
+        )
+    return BackendFinding(
+        name="apify",
+        status=health.MISSING,
+        detail="API_DISPATCH_SERVICE_URL/KEY not set",
+        prescription=(
+            "set API_DISPATCH_SERVICE_URL and API_DISPATCH_SERVICE_KEY "
+            "(env or ~/.config/last30days/.env), or point API_DISPATCH_ENV_FILE "
+            "at a .env file holding them"
+        ),
+        requires=_APIFY_REQUIRES,
+    )
+
+
 _X_PROBES: Dict[str, Callable[[Dict[str, Any]], BackendFinding]] = {
+    "apify": _probe_apify,
     "xai": _key_probe("xai", "XAI_API_KEY", "XAI_API_KEY (xAI/Grok live search)"),
     "bird": _probe_bird,
     "xurl": _probe_xurl,
     "xquik": _key_probe("xquik", "XQUIK_API_KEY", "XQUIK_API_KEY (xquik.com)"),
 }
-_X_PAID = {"xai", "xquik"}
+_X_PAID = {"apify", "xai", "xquik"}
 
 _WEB_PROBES: Dict[str, Callable[[Dict[str, Any]], BackendFinding]] = {
     "brave": _key_probe("brave", "BRAVE_API_KEY", "BRAVE_API_KEY"),
@@ -381,6 +413,7 @@ DESCRIPTORS: Dict[str, ChainDescriptor] = {
             BackendSpec(
                 name=name,
                 requires={
+                    "apify": _APIFY_REQUIRES,
                     "xai": "XAI_API_KEY (xAI/Grok live search)",
                     "bird": "X browser cookies (AUTH_TOKEN/CT0) + node",
                     "xurl": "xurl CLI installed + OAuth2 login",

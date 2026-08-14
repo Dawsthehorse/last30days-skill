@@ -115,7 +115,7 @@ class TestDescriptorRegistry:
         d = backends.get_descriptor("x")
         assert d.mode == backends.MODE_ALTERNATIVE
         assert tuple(s.name for s in d.backends) == env.X_BACKEND_ORDER
-        assert env.X_BACKEND_ORDER == ("xai", "bird", "xurl", "xquik")
+        assert env.X_BACKEND_ORDER == ("apify", "xai", "bird", "xurl", "xquik")
         assert d.pin_var == env.X_BACKEND_PIN_VAR == "LAST30DAYS_X_BACKEND"
 
     def test_env_exposes_reddit_pin_constants(self):
@@ -194,7 +194,8 @@ class TestXPrediction:
         res = _resolve_x({})
         assert res.active_backend is None
         assert res.tier == backends.TIER_ERROR
-        assert "XAI_API_KEY" in res.prescription
+        # apify (api-dispatch gateway) is now the highest-priority backend.
+        assert "API_DISPATCH_SERVICE_URL" in res.prescription
 
     def test_pinned_but_unusable_backend_is_error_with_its_prescription(self):
         # Pin bird without cookies: env.x_backend_chain returns [] (pipeline

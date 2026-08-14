@@ -789,11 +789,13 @@ def get_reddit_source(config: dict[str, Any]) -> str | None:
 # source; the rest are ordered failover backups, tried only if the one before
 # returns nothing or errors. There is one X source ("x"); these are its
 # interchangeable backends, never run in parallel.
+#   apify — Apify tweet scraper via the api-dispatch gateway
+#           (API_DISPATCH_SERVICE_URL/KEY; see lib/apify_x.py)
 #   xai   — xAI/Grok live search (XAI_API_KEY)
 #   bird  — X GraphQL scrape via the user's browser cookies (AUTH_TOKEN/CT0)
 #   xurl  — official X API v2 (xurl CLI, OAuth2)
 #   xquik — key-based REST X search (XQUIK_API_KEY); keyless of browser cookies
-_X_BACKEND_ORDER = ("xai", "bird", "xurl", "xquik")
+_X_BACKEND_ORDER = ("apify", "xai", "bird", "xurl", "xquik")
 
 # Public routing definitions for the doctor/backend-descriptor layer
 # (lib/backends.py). These are aliases for knowledge this module already
@@ -811,6 +813,9 @@ def _x_backend_available(
     has_bird_creds: bool,
     local_only: bool = False,
 ) -> bool:
+    if backend == 'apify':
+        from . import apify_x
+        return apify_x.is_available(config)
     if backend == 'xai':
         return bool(config.get('XAI_API_KEY'))
     if backend == 'bird':
@@ -1203,11 +1208,12 @@ def get_x_source_status(config: dict[str, Any], probe: bool = False) -> dict[str
         Dict with keys: source, bird_installed, bird_authenticated,
         bird_username, xai_available, can_install_bird
     """
-    from . import bird_x
+    from . import apify_x, bird_x
 
     if config.get('AUTH_TOKEN') and config.get('CT0'):
         bird_x.set_credentials(config.get('AUTH_TOKEN'), config.get('CT0'))
     bird_status = bird_x.get_bird_status()
+    apify_available = apify_x.is_available(config)
     xai_available = bool(config.get('XAI_API_KEY'))
 
     # Report the TRUE auth lane (browser / env / keychain) rather than the static
@@ -1244,10 +1250,13 @@ def get_x_source_status(config: dict[str, Any], probe: bool = False) -> dict[str
     from . import xurl_x as _xurl_x
     xurl_available = _xurl_x.is_available() if probe else _xurl_x.has_stored_auth()
 
-    # Determine active source. bird (browser cookies) and xAI win when present;
-    # when neither is available, xquik is the active X source. A probe that
-    # clearly failed (False) means xquik is not actually usable.
-    if bird_status["authenticated"]:
+    # Determine active source. apify (the gateway lane, first in the chain)
+    # wins when configured; then bird (browser cookies) and xAI; when none of
+    # those is available, xquik is the active X source. A probe that clearly
+    # failed (False) means xquik is not actually usable.
+    if apify_available:
+        source = 'apify'
+    elif bird_status["authenticated"]:
         source = 'bird'
     elif xai_available:
         source = 'xai'
@@ -1261,6 +1270,7 @@ def get_x_source_status(config: dict[str, Any], probe: bool = False) -> dict[str
 
     return {
         "source": source,
+        "apify_available": apify_available,
         "bird_installed": bird_status["installed"],
         "bird_authenticated": bird_status["authenticated"],
         "bird_username": bird_status["username"],

@@ -17,6 +17,21 @@ def _no_arctic_network():
 
 
 @pytest.fixture(autouse=True)
+def _no_ambient_apify_gateway(monkeypatch):
+    """Strip the api-dispatch gateway settings from the process environment so
+    the apify X backend reads as unconfigured unless a test opts in via config
+    or monkeypatch. Without this, a machine with the gateway configured
+    globally would flip every X-chain prediction test to 'apify'."""
+    from lib import apify_x
+
+    for var in (apify_x.URL_VAR, apify_x.KEY_VAR, apify_x.ENV_FILE_VAR):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(apify_x, "_env_file_cache", None)
+    yield
+    apify_x._env_file_cache = None
+
+
+@pytest.fixture(autouse=True)
 def _reset_probe_caches():
     """The doctor stack memoizes probe results in module-level dicts (safe for
     the one-shot CLI process, wrong across tests). Clear them around every test
