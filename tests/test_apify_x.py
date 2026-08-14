@@ -85,6 +85,36 @@ class TestAvailability(unittest.TestCase):
             ax._env_file_cache = None
             os.unlink(path)
 
+    def test_global_config_file_reaches_is_available(self):
+        """The documented ~/.config/last30days/.env path must actually work.
+
+        get_config() copies only allowlisted keys into config, so a missing
+        registration leaves the config tier of _resolve() permanently dead
+        while every unit test (which hand-builds a config dict) still passes.
+        """
+        import pathlib
+        import tempfile
+
+        import lib.env as env_mod
+
+        original = env_mod.CONFIG_FILE
+        path = pathlib.Path(tempfile.mkdtemp()) / ".env"
+        path.write_text(
+            "API_DISPATCH_SERVICE_URL=https://from-global\n"
+            "API_DISPATCH_SERVICE_KEY=global-key\n",
+            encoding="utf-8",
+        )
+        try:
+            env_mod.CONFIG_FILE = path
+            config = env_mod.get_config()
+            self.assertTrue(is_available(config))
+            self.assertEqual(
+                gateway_config(config), ("https://from-global", "global-key")
+            )
+            self.assertEqual(env_mod.x_backend_chain(config)[0], "apify")
+        finally:
+            env_mod.CONFIG_FILE = original
+
     def test_config_wins_over_env(self):
         import os
         with patch.dict(os.environ, {"API_DISPATCH_SERVICE_URL": "https://env.example"}):

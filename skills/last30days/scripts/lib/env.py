@@ -506,6 +506,16 @@ def get_config(policy: ConfigLoadPolicy | None = None) -> dict[str, Any]:
         ('OPENROUTER_BASE_URL', None),
         ('SCRAPECREATORS_API_KEY', None),
         ('APIFY_API_TOKEN', None),
+        # api-dispatch gateway fronting the Apify tweet scraper (X backend
+        # "apify"; see lib/apify_x.py). Registered here so the documented
+        # ~/.config/last30days/.env path actually reaches apify_x._resolve —
+        # without an entry the key never lands in config and the config tier
+        # of that lookup is dead.
+        # API_DISPATCH_ENV_FILE is deliberately NOT registered: apify_x reads
+        # it from os.environ only (its parse is cached process-wide, so it
+        # cannot vary per config dict). Registering it would be inert config.
+        ('API_DISPATCH_SERVICE_URL', None),
+        ('API_DISPATCH_SERVICE_KEY', None),
         ('AUTH_TOKEN', None),
         ('CT0', None),
         ('BSKY_HANDLE', None),

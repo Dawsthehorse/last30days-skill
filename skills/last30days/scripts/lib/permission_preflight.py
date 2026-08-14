@@ -6,6 +6,9 @@ from typing import Any
 
 
 ENDPOINT_OVERRIDE_KEYS = {
+    # Receives the api-dispatch service key as a bearer header, so a config
+    # source that redirects it redirects a secret.
+    "API_DISPATCH_SERVICE_URL",
     "BSKY_SEARCH_HOST",
     "LAST30DAYS_SEARXNG_URL",
     "LAST30DAYS_YOUTUBE_SSH_HOST",

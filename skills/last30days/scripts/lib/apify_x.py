@@ -63,6 +63,13 @@ _CALL_DEADLINE = 300
 # Floor for a clamped socket timeout, so the last request in the budget still
 # gets a fair chance instead of being issued with ~0s.
 _MIN_TIMEOUT = 5
+# One attempt per gateway request. http.request's default retries=5 runs its
+# own retry loop with exponential backoff sleeps that _clamped() cannot see:
+# with retries=5 a single _execute burns 5 x timeout + 30s of backoff (measured
+# 630s against this 300s budget), so the budget above only bounds the call when
+# each request is issued once. Retrying is not lost — the poll loops re-issue
+# under the budget, and a transient failure fails over to the next X backend.
+_HTTP_RETRIES = 1
 
 _env_file_cache: Optional[Dict[str, str]] = None
 
@@ -141,6 +148,7 @@ def _execute(
         {"service": "apify", "input": service_input, "wait": wait},
         headers={"x-service-key": key},
         timeout=_clamped(timeout, deadline),
+        retries=_HTTP_RETRIES,
     )
 
 
@@ -153,6 +161,7 @@ def _get_job(
         f"{url.rstrip('/')}/api/jobs/apify/{job_id}",
         headers={"x-service-key": key},
         timeout=_clamped(30, deadline),
+        retries=_HTTP_RETRIES,
     )
     job = wrapper.get("job")
     return job if isinstance(job, dict) else wrapper
