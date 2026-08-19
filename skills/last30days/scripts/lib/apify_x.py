@@ -130,10 +130,16 @@ def _min_faves(config: Optional[Dict[str, Any]] = None) -> int:
     if not raw:
         return 0
     try:
-        return max(0, int(raw))
+        floor = int(raw)
     except ValueError:
         _log(f"ignoring non-integer {MIN_FAVES_VAR}={raw!r}")
         return 0
+    if floor < 0:
+        # Say so rather than clamping silently: a sign typo leaves the caller
+        # believing spend is floored while every result is still billed.
+        _log(f"ignoring negative {MIN_FAVES_VAR}={raw!r}")
+        return 0
+    return floor
 
 
 def gateway_config(config: Optional[Dict[str, Any]] = None) -> tuple[str, str]:
@@ -422,10 +428,11 @@ def search_x(
     # Operators appended to every topic query: the date window, plus the
     # optional likes floor.
     operators = f" since:{from_date} until:{to_date}"
+    floor_note = f" (min_faves:{floor})" if floor else ""
     if floor:
         operators += f" min_faves:{floor}"
     terms = [f"{q}{operators}" for q in queries]
-    _log(f"Searching: {', '.join(queries)}{f' (min_faves:{floor})' if floor else ''}")
+    _log(f"Searching: {', '.join(queries)}{floor_note}")
     rows, fatal = _run_search_terms(terms, cfg["limit"], config)
     if fatal:
         return {"items": [], "error": fatal}
