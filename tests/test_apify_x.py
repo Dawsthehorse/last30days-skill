@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import patch
 
@@ -161,7 +162,6 @@ class TestSearchX(unittest.TestCase):
 
     @patch("lib.apify_x.http.post")
     def test_min_faves_floor_applies_to_topic_search(self, mock_post):
-        import os
         mock_post.side_effect = [_run_envelope(), _dataset_envelope([])]
         with patch.dict(os.environ, {"LAST30DAYS_X_MIN_FAVES": "500"}):
             search_x("AI agents", "2026-02-01", "2026-03-01", depth="quick",
@@ -171,8 +171,9 @@ class TestSearchX(unittest.TestCase):
 
     @patch("lib.apify_x.http.post")
     def test_min_faves_absent_or_junk_leaves_the_term_alone(self, mock_post):
-        import os
-        for value in ("", "0", "lots"):
+        # "-5" is a sign typo, not a floor of 5: it must read as off, and the
+        # caller must not be told a floor is in force while every result bills.
+        for value in ("", "0", "lots", "-5"):
             mock_post.reset_mock()
             mock_post.side_effect = [_run_envelope(), _dataset_envelope([])]
             with patch.dict(os.environ, {"LAST30DAYS_X_MIN_FAVES": value}):
@@ -186,7 +187,6 @@ class TestSearchX(unittest.TestCase):
         # The documented ~/.config/last30days/.env path lands in the config
         # dict, not os.environ. A floor set there must apply, or the user pays
         # per result for the noise it was meant to cut.
-        import os
         mock_post.side_effect = [_run_envelope(), _dataset_envelope([])]
         cfg = {**CONFIG, "LAST30DAYS_X_MIN_FAVES": "750"}
         with patch.dict(os.environ, {}, clear=False):
@@ -201,8 +201,6 @@ class TestSearchX(unittest.TestCase):
         # The floor is a topic-search knob. A named account is the point of
         # these lanes whatever its reach, so a floor must not silently empty
         # them.
-        import os
-        from lib.apify_x import search_handles, search_mentions
         for fn in (search_handles, search_mentions):
             mock_post.reset_mock()
             mock_post.side_effect = [_run_envelope(), _dataset_envelope([])]
