@@ -160,6 +160,28 @@ class TestSearchX(unittest.TestCase):
         self.assertIn("until:2026-03-01", terms[0])
 
     @patch("lib.apify_x.http.post")
+    def test_min_faves_floor_applies_to_topic_search(self, mock_post):
+        import os
+        mock_post.side_effect = [_run_envelope(), _dataset_envelope([])]
+        with patch.dict(os.environ, {"LAST30DAYS_X_MIN_FAVES": "500"}):
+            search_x("AI agents", "2026-02-01", "2026-03-01", depth="quick",
+                     config=CONFIG)
+        terms = mock_post.call_args_list[0][0][1]["input"]["input"]["searchTerms"]
+        self.assertIn("min_faves:500", terms[0])
+
+    @patch("lib.apify_x.http.post")
+    def test_min_faves_absent_or_junk_leaves_the_term_alone(self, mock_post):
+        import os
+        for value in ("", "0", "lots"):
+            mock_post.reset_mock()
+            mock_post.side_effect = [_run_envelope(), _dataset_envelope([])]
+            with patch.dict(os.environ, {"LAST30DAYS_X_MIN_FAVES": value}):
+                search_x("AI agents", "2026-02-01", "2026-03-01", depth="quick",
+                         config=CONFIG)
+            terms = mock_post.call_args_list[0][0][1]["input"]["input"]["searchTerms"]
+            self.assertNotIn("min_faves", terms[0], msg=value)
+
+    @patch("lib.apify_x.http.post")
     def test_auth_error_is_fatal(self, mock_post):
         from lib import http as http_mod
         mock_post.side_effect = http_mod.HTTPError("Unauthorized", status_code=401)

@@ -42,6 +42,14 @@ DEPTH_CONFIG = {
     "deep": {"limit": 60, "queries": 3},
 }
 
+# Optional likes floor for TOPIC search only (not handle/mention lookups,
+# where the whole point is a named account whatever its reach). X ranks a
+# narrow query's "Top" tab off a small pool, so a niche topic returns
+# small-account posts; this actor also bills per result, so an operator floor
+# both sharpens the pool and stops paying for the noise. Unset or 0 = off, so
+# no existing caller changes behaviour.
+MIN_FAVES_VAR = "LAST30DAYS_X_MIN_FAVES"
+
 URL_VAR = "API_DISPATCH_SERVICE_URL"
 KEY_VAR = "API_DISPATCH_SERVICE_KEY"
 ENV_FILE_VAR = "API_DISPATCH_ENV_FILE"
@@ -76,6 +84,18 @@ _env_file_cache: Optional[Dict[str, str]] = None
 
 def _log(msg: str):
     log.source_log("ApifyX", msg, tty_only=False)
+
+
+def _min_faves() -> int:
+    """Likes floor from the environment; 0 (off) when unset or unparseable."""
+    raw = (os.environ.get(MIN_FAVES_VAR) or "").strip()
+    if not raw:
+        return 0
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        _log(f"ignoring non-integer {MIN_FAVES_VAR}={raw!r}")
+        return 0
 
 
 def _env_file_values() -> Dict[str, str]:
@@ -390,8 +410,13 @@ def search_x(
 
     cfg = DEPTH_CONFIG.get(depth, DEPTH_CONFIG["default"])
     queries = _expand_queries(topic, depth)
-    terms = [f"{q} since:{from_date} until:{to_date}" for q in queries]
-    _log(f"Searching: {', '.join(queries)}")
+    window = f" since:{from_date} until:{to_date}"
+    floor = _min_faves()
+    if floor:
+        window += f" min_faves:{floor}"
+    terms = [f"{q}{window}" for q in queries]
+    _log(f"Searching: {', '.join(queries)}"
+         + (f" (min_faves:{floor})" if floor else ""))
     rows, fatal = _run_search_terms(terms, cfg["limit"], config)
     if fatal:
         return {"items": [], "error": fatal}
