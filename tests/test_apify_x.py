@@ -182,6 +182,39 @@ class TestSearchX(unittest.TestCase):
             self.assertNotIn("min_faves", terms[0], msg=value)
 
     @patch("lib.apify_x.http.post")
+    def test_min_faves_resolves_from_the_skill_config(self, mock_post):
+        # The documented ~/.config/last30days/.env path lands in the config
+        # dict, not os.environ. A floor set there must apply, or the user pays
+        # per result for the noise it was meant to cut.
+        import os
+        mock_post.side_effect = [_run_envelope(), _dataset_envelope([])]
+        cfg = {**CONFIG, "LAST30DAYS_X_MIN_FAVES": "750"}
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("LAST30DAYS_X_MIN_FAVES", None)
+            search_x("AI agents", "2026-02-01", "2026-03-01", depth="quick",
+                     config=cfg)
+        terms = mock_post.call_args_list[0][0][1]["input"]["input"]["searchTerms"]
+        self.assertIn("min_faves:750", terms[0])
+
+    @patch("lib.apify_x.http.post")
+    def test_min_faves_never_reaches_handle_or_mention_lookups(self, mock_post):
+        # The floor is a topic-search knob. A named account is the point of
+        # these lanes whatever its reach, so a floor must not silently empty
+        # them.
+        import os
+        from lib.apify_x import search_handles, search_mentions
+        for fn in (search_handles, search_mentions):
+            mock_post.reset_mock()
+            mock_post.side_effect = [_run_envelope(), _dataset_envelope([])]
+            with patch.dict(os.environ, {"LAST30DAYS_X_MIN_FAVES": "500"}):
+                if fn is search_handles:
+                    fn(["someone"], "AI", "2026-02-01", "2026-03-01", config=CONFIG)
+                else:
+                    fn(["someone"], "2026-02-01", "2026-03-01", config=CONFIG)
+            terms = mock_post.call_args_list[0][0][1]["input"]["input"]["searchTerms"]
+            self.assertNotIn("min_faves", terms[0], msg=fn.__name__)
+
+    @patch("lib.apify_x.http.post")
     def test_auth_error_is_fatal(self, mock_post):
         from lib import http as http_mod
         mock_post.side_effect = http_mod.HTTPError("Unauthorized", status_code=401)
