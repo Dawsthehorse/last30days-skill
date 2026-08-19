@@ -213,6 +213,43 @@ class TestSearchX(unittest.TestCase):
             self.assertNotIn("min_faves", terms[0], msg=fn.__name__)
 
     @patch("lib.apify_x.http.post")
+    def test_search_mode_is_sent_with_the_terms(self, mock_post):
+        # xquik returns nothing without mode="search"; the previous actor did
+        # not need it, so an unpinned mode is a silent empty-lane trap.
+        mock_post.side_effect = [_run_envelope(), _dataset_envelope([])]
+        search_x("AI agents", "2026-02-01", "2026-03-01", depth="quick",
+                 config=CONFIG)
+        payload = mock_post.call_args_list[0][0][1]["input"]["input"]
+        self.assertEqual(payload["mode"], "search")
+
+    @patch("lib.apify_x.http.post")
+    def test_mock_tweet_sentinel_rows_are_dropped(self, mock_post):
+        # A dead search bills and returns filler; counting it as a result is
+        # how an outage reads downstream as a quiet news day.
+        rows = [{"type": "mock_tweet", "id": -1, "text": "pricing notice"},
+                {"noResults": True}]
+        mock_post.side_effect = [_run_envelope(), _dataset_envelope(rows)]
+        result = search_x("AI agents", "2026-02-01", "2026-03-01",
+                          depth="quick", config=CONFIG)
+        self.assertEqual(result["items"], [])
+
+    @patch("lib.apify_x.http.post")
+    def test_row_without_author_username_uses_the_permalink(self, mock_post):
+        # xquik omits author.userName and supplies the permalink instead.
+        rows = [{"id": "2089849922522866002",
+                 "url": "https://x.com/edzitron/status/2089849922522866002",
+                 "text": "OpenAI is washed.", "likeCount": 1296,
+                 "createdAt": "Tue Aug 18 23:00:23 +0000 2026",
+                 "author": {"id": "1", "followers": 10}}]
+        mock_post.side_effect = [_run_envelope(), _dataset_envelope(rows)]
+        items = search_x("AI", "2026-08-12", "2026-08-19", depth="quick",
+                         config=CONFIG)["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["author_handle"], "edzitron")
+        self.assertEqual(items[0]["engagement"]["likes"], 1296)
+        self.assertEqual(items[0]["date"], "2026-08-18")
+
+    @patch("lib.apify_x.http.post")
     def test_auth_error_is_fatal(self, mock_post):
         from lib import http as http_mod
         mock_post.side_effect = http_mod.HTTPError("Unauthorized", status_code=401)
