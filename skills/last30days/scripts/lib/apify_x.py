@@ -28,12 +28,22 @@ from .relevance import token_overlap_relevance as _compute_relevance
 from .xquik import expand_xquik_queries as _expand_queries
 
 # Actor executed through the gateway. Pay-per-result; never a rental actor
-# (the gateway hard-fails rental-tier actors on free-plan tokens). NOT
-# apidojo/tweet-scraper: that actor gates free-plan Apify tokens (returns
-# only {"noResults": true} sentinels plus an upsell status message, verified
-# 2026-08-14). The kaitoeasyapi actor exposes the same input/output shape
-# and works on free-plan tokens.
-ACTOR_ID = "kaitoeasyapi/twitter-x-data-tweet-scraper-pay-per-result-cheapest"
+# (the gateway hard-fails rental-tier actors on free-plan tokens).
+#
+# Two actors have been rejected here, both for returning sentinel rows instead
+# of tweets while still billing:
+#   apidojo/tweet-scraper       gates free-plan tokens, returns
+#                               {"noResults": true} plus an upsell (2026-08-14)
+#   kaitoeasyapi/twitter-x-...  started returning {"type": "mock_tweet"} filler
+#                               for EVERY query, including a bare "openai" over
+#                               7 days, while its runs still reported SUCCEEDED
+#                               (2026-08-19). Its own filler text states it
+#                               bills a minimum per call regardless of results.
+# xquik takes the identical searchTerms/maxItems/queryType input and emits the
+# same likeCount/retweetCount/createdAt row shape, so it is a drop-in; it needs
+# mode="search" and returns the permalink in "url" rather than an author
+# userName, which _parse_tweet already falls back to.
+ACTOR_ID = "xquik/x-tweet-scraper"
 
 # Depth configurations: total results cap and number of query variants.
 DEPTH_CONFIG = {
@@ -346,6 +356,7 @@ def _run_search_terms(
                 "kind": "run",
                 "actorId": ACTOR_ID,
                 "input": {
+                    "mode": "search",
                     "searchTerms": search_terms,
                     "maxItems": max_items,
                     "queryType": "Top",
@@ -394,8 +405,14 @@ def _run_search_terms(
 
 
 def _looks_like_tweet(row: Dict[str, Any]) -> bool:
-    """Filter apidojo sentinel rows ({"noResults": true}) and junk."""
-    if row.get("noResults"):
+    """Filter sentinel rows and junk.
+
+    Every actor tried here signals "nothing found" with a billable filler row
+    rather than an empty dataset: apidojo sends {"noResults": true},
+    kaitoeasyapi sends {"type": "mock_tweet"}. Both must be dropped, or a dead
+    search reads downstream as real results.
+    """
+    if row.get("noResults") or row.get("type") == "mock_tweet":
         return False
     return bool(row.get("id") or row.get("url") or row.get("twitterUrl"))
 
