@@ -470,6 +470,11 @@ def get_config(policy: ConfigLoadPolicy | None = None) -> dict[str, Any]:
         ('LAST30DAYS_RERANK_MODEL', None),
         ('LAST30DAYS_X_MODEL', None),
         ('LAST30DAYS_X_BACKEND', None),
+        # Likes floor appended to the Apify X TOPIC search (lib/apify_x.py).
+        # Registered so the documented ~/.config/last30days/.env path reaches
+        # apify_x._min_faves; unregistered, its config tier would be dead and a
+        # floor set there would silently not apply while spend continued.
+        ('LAST30DAYS_X_MIN_FAVES', None),
         ('LAST30DAYS_REDDIT_BACKEND', None),
         # Doctor cache freshness window in seconds (doctor --cached).
         ('LAST30DAYS_DOCTOR_TTL', None),

@@ -86,18 +86,6 @@ def _log(msg: str):
     log.source_log("ApifyX", msg, tty_only=False)
 
 
-def _min_faves() -> int:
-    """Likes floor from the environment; 0 (off) when unset or unparseable."""
-    raw = (os.environ.get(MIN_FAVES_VAR) or "").strip()
-    if not raw:
-        return 0
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        _log(f"ignoring non-integer {MIN_FAVES_VAR}={raw!r}")
-        return 0
-
-
 def _env_file_values() -> Dict[str, str]:
     """Values from the optional API_DISPATCH_ENV_FILE, parsed once per process."""
     global _env_file_cache
@@ -126,6 +114,26 @@ def _resolve(config: Optional[Dict[str, Any]], var: str) -> str:
         if val:
             return val
     return ""
+
+
+def _min_faves(config: Optional[Dict[str, Any]] = None) -> int:
+    """Likes floor, resolved like every other setting here: skill config >
+    process env > env file. 0 (off) when unset or unparseable.
+
+    Reading os.environ alone would have made the documented
+    ``~/.config/last30days/.env`` path dead for this knob (the same trap the
+    API_DISPATCH keys hit before they were registered in env.py), leaving a
+    user who set a floor there still paying per result for the noise it was
+    meant to cut.
+    """
+    raw = _resolve(config, MIN_FAVES_VAR)
+    if not raw:
+        return 0
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        _log(f"ignoring non-integer {MIN_FAVES_VAR}={raw!r}")
+        return 0
 
 
 def gateway_config(config: Optional[Dict[str, Any]] = None) -> tuple[str, str]:
@@ -410,13 +418,14 @@ def search_x(
 
     cfg = DEPTH_CONFIG.get(depth, DEPTH_CONFIG["default"])
     queries = _expand_queries(topic, depth)
-    window = f" since:{from_date} until:{to_date}"
-    floor = _min_faves()
+    floor = _min_faves(config)
+    # Operators appended to every topic query: the date window, plus the
+    # optional likes floor.
+    operators = f" since:{from_date} until:{to_date}"
     if floor:
-        window += f" min_faves:{floor}"
-    terms = [f"{q}{window}" for q in queries]
-    _log(f"Searching: {', '.join(queries)}"
-         + (f" (min_faves:{floor})" if floor else ""))
+        operators += f" min_faves:{floor}"
+    terms = [f"{q}{operators}" for q in queries]
+    _log(f"Searching: {', '.join(queries)}{f' (min_faves:{floor})' if floor else ''}")
     rows, fatal = _run_search_terms(terms, cfg["limit"], config)
     if fatal:
         return {"items": [], "error": fatal}
