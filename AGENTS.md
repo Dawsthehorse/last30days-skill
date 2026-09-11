@@ -54,6 +54,7 @@ Agents open most PRs. Follow this so `CHANGELOG.md` stops conflicting and versio
 5. Lockstep gate remains `tests/test_plugin_contract.py::test_versions_match_across_manifests`. Workflow contract: `tests/test_changelog_workflow.py`.
 
 ## Rules
+- Never write file content through a shell heredoc. Use the harness Write or Edit tool for any file content. Heredocs are allowed only for short, single-quoted strings under 10 lines.
 - `lib/__init__.py` must be bare package marker (comment only, NO eager imports)
 - One-time setup: `npx skills add . -g -y` copies the skill into `~/.agents/skills/<name>/` (real directory) and, for harnesses that support symlinked skill dirs, drops a per-host symlink pointing at that copy. **Working-tree edits do NOT propagate automatically** — the `~/.agents/skills/<name>/` copy is frozen at install time. To sync after edits, re-run `npx skills add . -g -y`. For live-edit on a dev machine, replace the install copy with a symlink to the working tree: `ln -sfn "$PWD/skills/last30days" ~/.agents/skills/last30days` (run from the repo root).
 - Git remote: origin = public (`mvanhorn/last30days-skill`)
